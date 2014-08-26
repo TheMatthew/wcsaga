@@ -5,10 +5,13 @@
 
 // TODO: Put thread and mutex functions in osapi for abstraction
 
+
+#include <boost/interprocess/sync/interprocess_mutex.hpp>
+#include <boost/interprocess/sync/interprocess_semaphore.hpp>
+#include <boost/thread.hpp>
+
 #include "theora/theora.h"
 #include "vorbis/codec.h"
-
-#include <windows.h>
 
 #include "cfile/cfile.h"
 
@@ -25,11 +28,11 @@ class OggReader
 
 	bool working;
 
-	HANDLE mutexVideo;
-	HANDLE mutexAudio;
-	HANDLE thread;
-	HANDLE canWrite;
-	HANDLE readerSem;
+	boost::interprocess::interprocess_mutex mutexVideo;
+	boost::interprocess::interprocess_mutex mutexAudio;
+	boost::thread thread;
+	boost::interprocess::interprocess_semaphore canWrite;
+	boost::interprocess::interprocess_semaphore readerSem;
 	bool wantToRead;
 	bool writerIsWaiting;
 
@@ -61,7 +64,7 @@ public:
 
 protected:
 	// thread
-	static DWORD WINAPI run(LPVOID ptr);
+	static void run();
 
 private:
 	int popOggPacket(HANDLE mutex, ogg_stream_state* os, ogg_packet* op);

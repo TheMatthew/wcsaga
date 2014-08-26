@@ -10,8 +10,8 @@ OggReader::OggReader(CFILE* f, THEORAFILE* movie)
 	this->file = f;
 	this->movie = movie;
 	this->isOpen = true;
-	this->mutexVideo = CreateMutex(0, false, NULL);
-	this->mutexAudio = CreateMutex(0, false, NULL);
+	this->mutexVideo(boost::interprocess::open_or_create, "MutexVideo");
+	this->mutexAudio(boost::interprocess::open_or_create, "MutexAudio");
 	this->canWrite = CreateSemaphore(0, 1, 1, NULL);
 	this->readerSem = CreateSemaphore(0, 0, 1, NULL);
 
@@ -35,37 +35,25 @@ OggReader::~OggReader()
 	if (this->mutexVideo)
 	{
 		// close handle
-		if (!CloseHandle(this->mutexVideo))
-		{
-			fprintf(f, "WARNING:: Error closing video mutex handle, check if we don't have a handle leak\r\n");
-		}
+		boost::interprocess::remove("MutexVideo");
 	}
 
 	if (this->mutexAudio)
 	{
 		// close handle
-		if (!CloseHandle(this->mutexAudio))
-		{
-			fprintf(f, "WARNING:: Error closing audio mutex handle, check if we don't have a handle leak\r\n");
-		}
+		boost::interprocess::remove("MutexAudio");
 	}
 
 	if (this->canWrite)
 	{
 		// close handle
-		if (!CloseHandle(this->canWrite))
-		{
-			fprintf(f, "WARNING:: Error closing semaphore handle, check if we don't have a handle leak\r\n");
-		}
+		boost::interprocess::remove("canWrite");
 	}
 
 	if (this->readerSem)
 	{
 		// close handle
-		if (!CloseHandle(this->readerSem))
-		{
-			fprintf(f, "WARNING:: Error closing semaphore handle, check if we don't have a handle leak\r\n");
-		}
+		boost::interprocess::remove("readerSem");
 	}
 
 	fclose(f);
@@ -147,7 +135,7 @@ void OggReader::stop()
 		working = false;
 
 		// in case the thread is stopped at the semaphore
-		::ReleaseSemaphore(canWrite, 1, NULL);
+		::canWrite.post();
 
 		if (WAIT_FAILED == WaitForSingleObject(this->thread, INFINITE))
 		{
@@ -199,7 +187,7 @@ int OggReader::popAudioPacket(ogg_packet* op)
 	return popOggPacket(mutexAudio, &movie->v_osstate, op);
 }
 
-int OggReader::popOggPacket(HANDLE mutex, ogg_stream_state* os, ogg_packet* op)
+int OggReader::popOggPacket(boost::interprocess::interprocess_mutex mutex, ogg_stream_state* os, ogg_packet* op)
 {
 	int ret = 0;
 
@@ -218,7 +206,7 @@ bool OggReader::pushAudioPage(ogg_page* op)
 	return pushOggPage(mutexAudio, &movie->v_osstate, op);
 }
 
-bool OggReader::pushOggPage(HANDLE mutex, ogg_stream_state* os, ogg_page* op)
+bool OggReader::pushOggPage(boost::interprocess::interprocess_mutex mutex, ogg_stream_state* os, ogg_page* op)
 {
 	int ret = 0;
 
@@ -229,52 +217,52 @@ bool OggReader::pushOggPage(HANDLE mutex, ogg_stream_state* os, ogg_page* op)
 
 void OggReader::readerLock()
 {
-	WaitForSingleObject(mutexVideo, INFINITE);
+	mutexVideo.wait();
 	wantToRead = true;
-	ReleaseMutex(mutexVideo);
+	mutexVideo.post();
 
-	WaitForSingleObject(canWrite, INFINITE);
+	canWrite.wait();
 }
 
 void OggReader::readerRelease()
 {
-	WaitForSingleObject(mutexVideo, INFINITE);
+	mutexVideo.wait();
 	wantToRead = false;
 	if (writerIsWaiting)
 	{
-		ReleaseSemaphore(readerSem, 1, NULL);
+		readerSem.post();
 	}
-	ReleaseMutex(mutexVideo);
+	mutexVideo.post();
 
-	ReleaseSemaphore(canWrite, 1, NULL);
+	canWrite.post();
 }
 
 void OggReader::writerLock()
 {
-	WaitForSingleObject(mutexVideo, INFINITE);
+	mutexVideo.wait();
 	if (wantToRead)
 	{
 		writerIsWaiting = true;
-		ReleaseMutex(mutexVideo);
+		mutexVideo.post();
 
 		WaitForSingleObject(readerSem, INFINITE); // wait for reader to finish	
 
-		WaitForSingleObject(mutexVideo, INFINITE);
+		mutexVideo.wait();
 		writerIsWaiting = false;
-		ReleaseMutex(mutexVideo);
+		mutexVideo.post();
 
-		WaitForSingleObject(canWrite, INFINITE);
+		canWrite.wait();
 	}
 	else
 	{
-		ReleaseMutex(mutexVideo);
-		WaitForSingleObject(canWrite, INFINITE);
+		mutexVideo.post();
+		canWrite.wait();
 	}
 }
 
 void OggReader::writerRelease()
 {
-	ReleaseSemaphore(canWrite, 1, NULL);
+	canWrite.post();
 }
 
 void OggReader::compact_now(ogg_stream_state* os)
